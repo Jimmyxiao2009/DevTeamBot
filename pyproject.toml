@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devteam-bot"
+version = "0.1.0"
+description = "程序组bot：GitHub 私有仓库事件同步与查询（OneBot v11 / Lagrange）"
+requires-python = ">=3.11"
+dependencies = [
+    "nonebot2[fastapi]>=2.3.0",
+    "nonebot-adapter-onebot>=2.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "websockets>=12.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["botcore*", "plugins*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]

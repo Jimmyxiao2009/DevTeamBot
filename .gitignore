@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 虚拟环境
+.venv/
+
+# 运行时秘密与状态（绝不入库）
+.env
+data/
+logs/
+
+# SDD 工具元数据
+.kunsdd/
