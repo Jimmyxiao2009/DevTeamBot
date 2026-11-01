@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from nonebot import logger
@@ -20,6 +22,8 @@ from .state import WatcherState
 
 BACKOFF_BASE = 60.0
 BACKOFF_MAX = 300.0
+# 和 query 指令里 file 的上限一致，避免一次刷屏太多文件。
+MAX_RELEASE_ATTACHMENTS = 5
 
 
 def _nightly(tag: str, name: str, pattern) -> bool:
@@ -112,9 +116,12 @@ class Watcher:
 
         all_ok = True
 
-        # 1) releases（时间正序）
+        # 1) releases（时间正序）：文字通知之后，如果这个 release 挂了附件，紧接着
+        # 把附件也发过去，跟 query 指令里的 file 是同一份下载/上传逻辑。
         for r in new_releases:
             ok = await self.notifier.broadcast(format_release(self.repo, r))
+            if ok and r.get("assets"):
+                ok = await self._broadcast_release_files(r) and ok
             all_ok &= ok
             if ok:
                 self.state.mark_release(str(r.get("tag", "")))
@@ -139,6 +146,23 @@ class Watcher:
                 self.state.mark_pr(int(p.get("number", 0)))
 
         return all_ok
+
+    # ---- release 附件 ----
+    async def _broadcast_release_files(self, r: dict[str, Any]) -> bool:
+        """下载新 release 的附件并广播给所有目标。下载失败只影响这一项（文字通知
+        已经发出去了），返回 False 让 poll_once 不推进这条 release 的水位，下一轮
+        重试；文字通知本身可能因此重发，属于既有的 at-least-once 权衡。"""
+        tag = str(r.get("tag", ""))
+        try:
+            with tempfile.TemporaryDirectory(prefix="release-notify-") as tmp:
+                await self.gh.download_release_assets(tag, tmp)
+                paths = sorted(str(p) for p in Path(tmp).iterdir() if p.is_file())
+                if not paths:
+                    return True
+                return await self.notifier.broadcast_files(paths[:MAX_RELEASE_ATTACHMENTS])
+        except GhError as e:
+            logger.warning(f"下载 release {tag} 附件失败，本轮附件未发送: {e}")
+            return False
 
     # ---- 主循环 ----
     async def run(self) -> None:

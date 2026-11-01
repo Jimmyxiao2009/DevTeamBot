@@ -46,12 +46,20 @@ def format_pr(repo: str, p: dict[str, Any]) -> str:
     )
 
 
+def _format_body(text: str | None, limit: int = 300) -> str:
+    body = (text or "").strip()
+    if not body:
+        return "（无更新说明）"
+    return body if len(body) <= limit else body[:limit].rstrip() + "…"
+
+
 def format_release(repo: str, r: dict[str, Any]) -> str:
     tag = r.get("tag", "")
     name = r.get("name") or tag
     return (
         f"{BRAND}新发布 {tag} · {repo}\n"
         f"{first_line(name)} — {r.get('author', 'unknown')}\n"
+        f"此版本的更新内容：\n{_format_body(r.get('body'))}\n"
         f"时间: {_fmt_time(r.get('created_at'))}\n"
         f"{r.get('url')}"
     )

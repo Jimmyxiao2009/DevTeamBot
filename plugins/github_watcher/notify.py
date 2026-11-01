@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import nonebot
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import ActionFailed, Bot, NetworkError
@@ -51,12 +53,48 @@ class Notifier:
             # 未配置目标视为成功，避免水位永远卡住
             return True
         results: list[bool] = []
-        results.extend(
-            await self._send_group(bot, gid, message) for gid in self.group_ids
-        )
-        results.extend(
-            await self._send_private(bot, uid, message) for uid in self.user_ids
-        )
+        for gid in self.group_ids:
+            results.append(await self._send_group(bot, gid, message))
+        for uid in self.user_ids:
+            results.append(await self._send_private(bot, uid, message))
         if not all(results):
             logger.warning("本轮通知存在发送失败的目标，水位不推进，下一轮将重试（部分目标可能收到重复消息）")
+        return all(results)
+
+    async def _send_group_file(self, bot: Bot, group_id: int, path: str, name: str) -> bool:
+        try:
+            await bot.upload_group_file(group_id=group_id, file=path, name=name)
+        except (ActionFailed, NetworkError, TimeoutError) as e:
+            logger.warning(f"发送文件 {name} 到群 {group_id} 失败: {type(e).__name__}: {e}")
+            return False
+        return True
+
+    async def _send_private_file(self, bot: Bot, user_id: int, path: str, name: str) -> bool:
+        try:
+            await bot.upload_private_file(user_id=user_id, file=path, name=name)
+        except (ActionFailed, NetworkError, TimeoutError) as e:
+            logger.warning(f"发送文件 {name} 到私聊 {user_id} 失败: {type(e).__name__}: {e}")
+            return False
+        return True
+
+    async def broadcast_files(self, paths: list[str]) -> bool:
+        """把本地文件逐个发给所有群和私聊目标；全部成功才返回 True（同 broadcast()
+        的水位语义——调用方失败时不应推进水位，下一轮会重发）。"""
+        bot = get_connected_bot()
+        if bot is None:
+            logger.warning("暂无已连接的 OneBot 客户端（Lagrange 未上线？），本次文件未发送")
+            return False
+        if not paths:
+            return True
+        if not self.group_ids and not self.user_ids:
+            return True
+        results: list[bool] = []
+        for path in paths:
+            name = Path(path).name
+            for gid in self.group_ids:
+                results.append(await self._send_group_file(bot, gid, path, name))
+            for uid in self.user_ids:
+                results.append(await self._send_private_file(bot, uid, path, name))
+        if not all(results):
+            logger.warning("本轮文件推送存在发送失败的目标，水位不推进，下一轮将重试（部分目标可能收到重复文件）")
         return all(results)

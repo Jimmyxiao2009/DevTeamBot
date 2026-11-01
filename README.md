@@ -4,7 +4,7 @@
 
 - **监控仓库**：`Jimmyxiao2009/FanShengJing`（私有，依赖本机 `gh auth login` 登录态）
 - **协议**：OneBot v11 反向 WebSocket（bot 是 WS 服务端，Lagrange 是客户端）
-- **通知规则**：新提交 / 新 PR / 新 release（nightly 与 draft 除外）
+- **通知规则**：新提交 / 新 PR / 新 release（nightly 与 draft 除外）；新 release 若挂了附件，文字通知发出后会自动把附件也逐个发到同样的群/私聊（最多 5 个，跟 `file` 指令共用下载/上传逻辑）
 - **可靠性**：消息全部发送成功才推进水位，失败下轮自动补发；gh 故障指数退避（60s→5min 封顶），不丢事件
 
 ## 一、首次部署
@@ -72,7 +72,8 @@ gh auth status       # 确认已登录 Jimmyxiao2009
 |---|---|---|
 | `ping` | 群 @ 或私聊 | `pong` |
 | `help` / `帮助` | 同上 | 指令清单 |
-| `release` / `发布` | 同上 | 最新非 nightly 发布 |
+| `release` / `发布` | 同上 | 最新正式发布 + 最新预发布（各一条，缺失显示"暂无"） |
+| `file` / `文件` | 同上 | 下载最新 release 的附件并发到当前会话（最多 5 个，无附件时给下载页链接） |
 | `commits [n]` / `提交` | 同上 | 最近 n 条提交（1-10，默认 5） |
 | `pr` | 同上 | 开放 PR 列表（≤10） |
 
@@ -87,12 +88,14 @@ chore: 更新战斗数值 — Jimmyxiao2009
 https://github.com/Jimmyxiao2009/FanShengJing/commit/<sha>
 ```
 
+新 release 挂了附件时，这条文字通知发完之后会紧接着把每个附件当文件消息发过去（群用 `upload_group_file`，私聊用 `upload_private_file`），不需要额外去问 bot 要。附件下载失败不会影响文字通知已经发出去这件事，但这条 release 的水位不会推进，下一轮会重试（文字通知可能因此重复发一次）。
+
 ## 四、运维
 
 - **状态文件**：`data/state.json`（水位）。删除后重启 = 重建基线，不会重发历史事件（首轮只记录不发通知）
 - **日志**：控制台实时输出；`.env` 里 `LOG_TO_FILE=1` 后写 `logs/bot.log`（10MB 轮转 ×10 份）。token 永远脱敏
 - **自检**：`python scripts/check_env.py`（Python/.env/端口/gh 登录逐项检查）
-- **测试**：`.venv/Scripts/python -m pytest tests/ -q`（33 个用例，含伪 Lagrange WS 端到端）
+- **测试**：`.venv/Scripts/python -m pytest tests/ -q`（39 个用例，含伪 Lagrange WS 端到端）
 
 ### 开机自启（可选）
 

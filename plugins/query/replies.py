@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from botcore.config import Settings
@@ -11,6 +12,7 @@ from ..github_watcher.format import _fmt_time, first_line
 from ..github_watcher.gh import GhCli, GhError
 
 DEBOUNCE_SECONDS = 5.0
+MAX_FILE_ATTACHMENTS = 5  # file 指令单次最多发送的附件数，避免刷屏
 _last_query: dict[str, float] = {}
 
 
@@ -35,23 +37,45 @@ def clamp_count(raw: str | None, default: int = 5, lo: int = 1, hi: int = 10) ->
 HELP_TEXT = (
     "【程序组bot】指令清单\n"
     "ping — 存活测试\n"
-    "release — 最新发布（不含 nightly）\n"
+    "release — 最新正式发布 + 最新预发布\n"
+    "file — 发送最新发布的附件文件\n"
     "commits [n] — 最近 n 条提交（1-10，默认 5）\n"
     "pr — 开放的 PR 列表（最多 10 条）"
 )
 
 
-async def reply_release(gh: GhCli) -> str:
-    releases = await gh.releases()
-    latest = next((r for r in releases if not r.get("draft")), None)
-    if latest is None:
-        return "该仓库还没有正式发布（无 release 记录）"
-    tag = latest.get("tag", "")
-    name = latest.get("name") or tag
+def _format_release_line(label: str, r: dict[str, Any]) -> str:
+    tag = r.get("tag", "")
+    name = r.get("name") or tag
     return (
-        f"最新发布 {tag}\n{first_line(name)} — {latest.get('author', 'unknown')}\n"
-        f"时间: {_fmt_time(latest.get('created_at'))}\n{latest.get('url')}"
+        f"{label} {tag}\n{first_line(name)} — {r.get('author', 'unknown')}\n"
+        f"时间: {_fmt_time(r.get('created_at'))}\n{r.get('url')}"
     )
+
+
+async def reply_release(gh: GhCli) -> str:
+    published = [r for r in await gh.releases() if not r.get("draft")]
+    if not published:
+        return "该仓库还没有正式发布（无 release 记录）"
+    stable = next((r for r in published if not r.get("prerelease")), None)
+    pre = next((r for r in published if r.get("prerelease")), None)
+    lines = [
+        _format_release_line("最新正式发布", stable) if stable else "最新正式发布: 暂无",
+        _format_release_line("最新预发布", pre) if pre else "最新预发布: 暂无",
+    ]
+    return "\n\n".join(lines)
+
+
+async def latest_release(gh: GhCli) -> dict[str, Any] | None:
+    """最新的非草稿 release（不分正式/预发布），供 file 指令使用。"""
+    published = [r for r in await gh.releases() if not r.get("draft")]
+    return published[0] if published else None
+
+
+async def download_release_files(gh: GhCli, release: dict[str, Any], dest_dir: str) -> list[str]:
+    """把 release 的全部附件下载到 dest_dir，返回本地文件绝对路径（按文件名排序）。"""
+    await gh.download_release_assets(release.get("tag", ""), dest_dir)
+    return sorted(str(p) for p in Path(dest_dir).iterdir() if p.is_file())
 
 
 async def reply_commits(gh: GhCli, count: int, repo: str) -> str:

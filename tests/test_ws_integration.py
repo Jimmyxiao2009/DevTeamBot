@@ -21,6 +21,7 @@ import websockets
 
 ROOT = Path(__file__).resolve().parent.parent
 VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
+FAKE_GH = ROOT / "tests" / "fake_gh" / "gh.py"
 TOKEN = "it-test-token-abc"
 SELF_ID = "10000"
 USER_ID = 20000
@@ -59,6 +60,7 @@ def server(tmp_path):
         "BOT_DISABLE_WATCHER": "1",
         "BOT_DATA_DIR": str(tmp_path),
         "FAKE_GH_STATE": str(tmp_path / "scenario.json"),
+        "GITHUB_CLI_PATH": f'"{VENV_PY}" "{FAKE_GH}"',
     }
     log = tmp_path / "bot.log"
     proc = subprocess.Popen(
@@ -202,5 +204,44 @@ async def test_group_at_ping_pong(server) -> None:
         await ws.send(
             json.dumps(
                 {"status": "ok", "retcode": 0, "data": {"message_id": 9}, "echo": call["echo"]}
+            )
+        )
+
+
+async def test_group_file_command(server, tmp_path) -> None:
+    (tmp_path / "scenario.json").write_text(
+        json.dumps(
+            {
+                "releases": [
+                    {
+                        "tag": "v1.0.0",
+                        "name": "正式版",
+                        "url": "https://example.com/r",
+                        "created_at": None,
+                        "draft": False,
+                        "assets": [{"name": "app.zip", "size": 10}],
+                    }
+                ],
+                "release_assets": [{"name": "app.zip", "content": "fake zip bytes"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    async with _ws_connect(
+        server, {"X-Self-ID": SELF_ID, "Authorization": f"Bearer {TOKEN}"}
+    ) as ws:
+        await ws.send(group_at_event("file"))
+        upload = await _recv_api_call(ws, {"action": "upload_group_file"})
+        assert upload["params"]["group_id"] == GROUP_ID
+        assert upload["params"]["name"] == "app.zip"
+        await ws.send(json.dumps({"status": "ok", "retcode": 0, "data": {}, "echo": upload["echo"]}))
+
+        summary = await _recv_api_call(ws, {"action": "send_msg", "message_type": "group"})
+        raw = json.dumps(summary["params"]["message"], ensure_ascii=False)
+        assert "已发送 1 个" in raw
+        await ws.send(
+            json.dumps(
+                {"status": "ok", "retcode": 0, "data": {"message_id": 9}, "echo": summary["echo"]}
             )
         )

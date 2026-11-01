@@ -14,3 +14,6 @@ logs/
 
 # SDD 工具元数据
 .kunsdd/
+
+# NapCat 运行时（含账号数据与 token，体积也大，不入库）
+napcat/

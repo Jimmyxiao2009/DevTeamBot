@@ -8,6 +8,8 @@ from plugins.query.replies import (
     HELP_TEXT,
     check_debounce,
     clamp_count,
+    download_release_files,
+    latest_release,
     reply_commits,
     reply_prs,
     reply_release,
@@ -52,6 +54,89 @@ async def test_reply_release_skips_draft(fake_gh, scenario) -> None:
     )
     text = await reply_release(fake_gh)
     assert "v0.9.0" in text and "v9.0.0" not in text
+
+
+async def test_reply_release_splits_stable_and_prerelease(fake_gh, scenario) -> None:
+    write, _ = scenario
+    write(
+        {
+            "releases": [
+                {
+                    "tag": "v1.1.0-beta",
+                    "name": "beta",
+                    "url": "u1",
+                    "created_at": None,
+                    "draft": False,
+                    "prerelease": True,
+                    "author": "x",
+                },
+                {
+                    "tag": "v1.0.0",
+                    "name": "正式版",
+                    "url": "u2",
+                    "created_at": None,
+                    "draft": False,
+                    "prerelease": False,
+                    "author": "y",
+                },
+            ]
+        }
+    )
+    text = await reply_release(fake_gh)
+    assert "最新正式发布 v1.0.0" in text
+    assert "最新预发布 v1.1.0-beta" in text
+
+
+async def test_reply_release_no_prerelease(fake_gh, scenario) -> None:
+    write, _ = scenario
+    write(
+        {
+            "releases": [
+                {"tag": "v1.0.0", "name": "正式版", "url": "u2", "created_at": None, "draft": False, "prerelease": False, "author": "y"},
+            ]
+        }
+    )
+    text = await reply_release(fake_gh)
+    assert "最新正式发布 v1.0.0" in text
+    assert "最新预发布: 暂无" in text
+
+
+async def test_latest_release_picks_newest_non_draft(fake_gh, scenario) -> None:
+    write, _ = scenario
+    write(
+        {
+            "releases": [
+                {"tag": "v2.0.0-draft", "url": "u1", "created_at": None, "draft": True, "assets": []},
+                {"tag": "v1.5.0", "url": "u2", "created_at": None, "draft": False, "assets": []},
+            ]
+        }
+    )
+    r = await latest_release(fake_gh)
+    assert r is not None and r["tag"] == "v1.5.0"
+
+
+async def test_latest_release_none_when_no_releases(fake_gh, scenario) -> None:
+    write, _ = scenario
+    write({"releases": []})
+    assert await latest_release(fake_gh) is None
+
+
+async def test_download_release_files(fake_gh, scenario, tmp_path) -> None:
+    write, _ = scenario
+    write(
+        {
+            "releases": [{"tag": "v1.5.0", "url": "u2", "created_at": None, "draft": False, "assets": []}],
+            "release_assets": [
+                {"name": "app.zip", "content": "fake zip bytes"},
+                {"name": "notes.txt", "content": "release notes"},
+            ],
+        }
+    )
+    release = await latest_release(fake_gh)
+    dest = tmp_path / "download"
+    dest.mkdir()
+    paths = await download_release_files(fake_gh, release, str(dest))
+    assert sorted(p.split("/")[-1].split("\\")[-1] for p in paths) == ["app.zip", "notes.txt"]
 
 
 async def test_reply_commits(fake_gh, scenario) -> None:

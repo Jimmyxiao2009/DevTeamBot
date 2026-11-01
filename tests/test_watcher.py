@@ -36,7 +36,7 @@ def pr(n: int, title: str = "feat") -> dict:
     }
 
 
-def release(tag: str, *, draft: bool = False, name: str | None = None) -> dict:
+def release(tag: str, *, draft: bool = False, name: str | None = None, assets: list[dict] | None = None) -> dict:
     return {
         "tag": tag,
         "name": name or tag,
@@ -45,6 +45,7 @@ def release(tag: str, *, draft: bool = False, name: str | None = None) -> dict:
         "draft": draft,
         "prerelease": False,
         "author": "carol",
+        "assets": assets or [],
     }
 
 
@@ -95,6 +96,55 @@ async def test_new_pr_and_release_notify(rig) -> None:
     assert "新 PR #42" in texts
     assert "新发布 v0.3.1" in texts
     assert state.is_known_pr(42) and state.is_known_release("v0.3.1")
+    assert notifier.sent_files == []  # 这条 release 没有附件，不应该触发文件推送
+
+
+async def test_release_with_assets_also_broadcasts_files(rig) -> None:
+    write, build, notifier, state = rig
+    write({})
+    w = build()
+    await w.baseline()
+    write(
+        {
+            "releases": [release("v1.0.0", assets=[{"name": "app.zip", "size": 10}])],
+            "release_assets": [{"name": "app.zip", "content": "fake binary"}],
+        }
+    )
+    assert await w.poll_once("main")
+    assert any("新发布 v1.0.0" in msg for msg in notifier.sent)
+    assert len(notifier.sent_files) == 1
+    assert notifier.sent_files[0].endswith("app.zip")
+    assert state.is_known_release("v1.0.0")
+
+
+async def test_release_file_download_failure_keeps_watermark(rig) -> None:
+    write, build, notifier, state = rig
+    write({})
+    w = build()
+    await w.baseline()
+    write(
+        {
+            "releases": [release("v1.1.0", assets=[{"name": "app.zip", "size": 10}])],
+            "release_assets": [{"name": "app.zip", "content": "fake binary"}],
+            "fail": {"download": True},
+        }
+    )
+    assert not await w.poll_once("main")  # 附件下载失败，整轮算失败
+    assert any("新发布 v1.1.0" in msg for msg in notifier.sent)  # 文字通知已经发出去了
+    assert notifier.sent_files == []
+    assert not state.is_known_release("v1.1.0")  # 水位不推进，下一轮重试
+
+    # 恢复正常后重试应成功（write() 整体覆盖场景文件，release/release_assets 要重写一遍；
+    # 文字通知会因此重复发一次，是既有的 at-least-once 权衡）
+    write(
+        {
+            "releases": [release("v1.1.0", assets=[{"name": "app.zip", "size": 10}])],
+            "release_assets": [{"name": "app.zip", "content": "fake binary"}],
+        }
+    )
+    assert await w.poll_once("main")
+    assert len(notifier.sent_files) == 1
+    assert state.is_known_release("v1.1.0")
 
 
 async def test_nightly_and_draft_skipped(rig) -> None:

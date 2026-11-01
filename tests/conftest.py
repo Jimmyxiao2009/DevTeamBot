@@ -40,12 +40,19 @@ class FakeNotifier:
 
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.sent_files: list[str] = []
         self.fail = False
 
     async def broadcast(self, message: str) -> bool:
         if self.fail:
             return False
         self.sent.append(message)
+        return True
+
+    async def broadcast_files(self, paths: list[str]) -> bool:
+        if self.fail:
+            return False
+        self.sent_files.extend(paths)
         return True
 
 

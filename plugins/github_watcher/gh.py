@@ -28,7 +28,8 @@ PRS_JQ = (
 )
 RELEASES_JQ = (
     ".[] | {tag: .tag_name, name: .name, url: .html_url, created_at: .created_at, "
-    'draft: .draft, prerelease: .prerelease, author: (.author.login // "unknown")}'
+    'draft: .draft, prerelease: .prerelease, author: (.author.login // "unknown"), '
+    "body: .body, assets: [.assets[] | {name: .name, size: .size}]}"
 )
 REPO_JQ = "{default_branch: .default_branch, full_name: .full_name, html_url: .html_url}"
 
@@ -109,3 +110,33 @@ class GhCli:
 
     async def releases(self, per_page: int = 30) -> list[dict[str, Any]]:
         return await self._api(f"repos/{self.repo}/releases?per_page={per_page}", RELEASES_JQ)
+
+    async def download_release_assets(self, tag: str, dest_dir: str) -> None:
+        """用 `gh release download` 把某个 tag 下的全部附件下载到 dest_dir。
+
+        下载比一般 API 调用慢，超时给 3 倍宽限；调用方需先确认该 release
+        确实有 assets（否则 gh 会以非零退出码报错）。
+        """
+        args = [*self.argv, "release", "download", tag, "-R", self.repo, "-D", dest_dir, "--clobber"]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.getcwd(),
+            )
+        except FileNotFoundError as e:
+            raise GhError("未找到 gh 命令，请先安装 GitHub CLI: https://cli.github.com") from e
+        wait = self.timeout * 3
+        try:
+            _, stderr_b = await asyncio.wait_for(proc.communicate(), wait)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise GhError(f"下载发布文件超时（>{wait:.0f}s）: {tag}") from None
+        if proc.returncode != 0:
+            stderr = stderr_b.decode("utf-8", errors="replace").strip()
+            low = stderr.lower()
+            if any(hint in low for hint in _AUTH_HINTS):
+                raise GhError("gh 未登录或凭据失效，请在本机运行: gh auth login")
+            raise GhError(f"下载发布文件失败（退出码 {proc.returncode}）: {mask_secrets(stderr[:300])}")

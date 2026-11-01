@@ -4,9 +4,13 @@
 {
   "repo":    {...} 或缺省（用默认）,
   "commits": [...]  / "pulls": [...]  / "releases": [...],
-  "fail": {"commits": true, "auth": true}   # 可选失败注入
+  "release_assets": [{"name": "app.zip", "content": "fake binary"}],  # 供 release download 用
+  "fail": {"commits": true, "auth": true, "download": true}   # 可选失败注入
 }
 测试在两轮轮询之间改写场景文件即可模拟"新事件出现"。
+
+另支持 `gh.py release download <tag> -R <repo> -D <dir>`：把
+scenario["release_assets"] 逐个写成文件落到 -D 指定目录，模拟真实下载。
 """
 
 from __future__ import annotations
@@ -52,6 +56,21 @@ def main() -> int:
             return 1
         print("✓ Logged in to github.com account fake (keyring)")
         return 0
+    if args[:2] == ["release", "download"]:
+        if scenario.get("fail", {}).get("download"):
+            print("fake gh: injected failure for download", file=sys.stderr)
+            return 1
+        dest = args[args.index("-D") + 1] if "-D" in args else "."
+        assets = scenario.get("release_assets") or []
+        if not assets:
+            print("no assets to download", file=sys.stderr)
+            return 1
+        os.makedirs(dest, exist_ok=True)
+        for asset in assets:
+            with open(os.path.join(dest, asset["name"]), "w", encoding="utf-8") as f:
+                f.write(asset.get("content", ""))
+        return 0
+
     if args[0] != "api":
         print(f"fake gh: unsupported args {args}", file=sys.stderr)
         return 2
